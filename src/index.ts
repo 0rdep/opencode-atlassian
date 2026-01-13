@@ -18,6 +18,7 @@ import { GitServiceLive } from "./services/GitService.ts"
 import { OpenCodeClientLive } from "./services/OpenCodeClient.ts"
 import { TaskWorkflowLayer } from "./workflows/TaskWorkflow.ts"
 import { startHandler } from "./commands/start.ts"
+import { listHandler } from "./commands/list.ts"
 
 /**
  * Create the full application layer from CLI options
@@ -76,10 +77,20 @@ const startCommand = Command.make(
 )
 
 /**
+ * List command - displays all tasks in a table
+ */
+const listCommand = Command.make("list", {}, () =>
+  listHandler.pipe(
+    Effect.provide(DatabaseLive()),
+    Effect.catchAllCause((cause) => Console.error(`Error: ${cause}`))
+  )
+)
+
+/**
  * Root command with subcommands
  */
 const rootCommand = Command.make("opencode-atlassian").pipe(
-  Command.withSubcommands([startCommand])
+  Command.withSubcommands([startCommand, listCommand])
 )
 
 /**

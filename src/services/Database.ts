@@ -44,6 +44,11 @@ export interface DatabaseService {
    * Get task by ID
    */
   readonly findById: (id: number) => Effect.Effect<Option.Option<Task>>
+
+  /**
+   * Get all tasks
+   */
+  readonly findAll: () => Effect.Effect<readonly Task[]>
 }
 
 /**
@@ -99,6 +104,10 @@ const FIND_BY_STATUS_SQL = `
 
 const FIND_BY_ID_SQL = `
   SELECT * FROM tasks WHERE id = ?
+`
+
+const FIND_ALL_SQL = `
+  SELECT * FROM tasks ORDER BY created_at DESC
 `
 
 /**
@@ -171,6 +180,12 @@ const makeDatabaseService = (db: BunDatabase): DatabaseService => ({
     Effect.sync(() => {
       const row = db.query<TaskRow, [number]>(FIND_BY_ID_SQL).get(id)
       return row ? Option.some(rowToTask(row)) : Option.none()
+    }),
+
+  findAll: () =>
+    Effect.sync(() => {
+      const rows = db.query<TaskRow, []>(FIND_ALL_SQL).all()
+      return rows.map(rowToTask)
     }),
 })
 
