@@ -18,7 +18,7 @@ import { GitServiceLive } from "./services/GitService.ts"
 import { OpenCodeClientLive } from "./services/OpenCodeClient.ts"
 import { TaskWorkflowLayer } from "./workflows/TaskWorkflow.ts"
 import { startHandler } from "./commands/start.ts"
-import { listHandler } from "./commands/list.ts"
+import { listHandler, listOptions } from "./commands/list.ts"
 
 /**
  * Create the full application layer from CLI options
@@ -79,11 +79,17 @@ const startCommand = Command.make(
 /**
  * List command - displays all tasks in a table
  */
-const listCommand = Command.make("list", {}, () =>
-  listHandler.pipe(
-    Effect.provide(DatabaseLive()),
-    Effect.catchAllCause((cause) => Console.error(`Error: ${cause}`))
-  )
+const listCommand = Command.make(
+  "list",
+  {
+    status: listOptions.status,
+    limit: listOptions.limit,
+  },
+  (args) =>
+    listHandler(args).pipe(
+      Effect.provide(DatabaseLive()),
+      Effect.catchAllCause((cause) => Console.error(`Error: ${cause}`))
+    )
 )
 
 /**

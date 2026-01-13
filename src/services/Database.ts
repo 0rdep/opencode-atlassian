@@ -46,9 +46,9 @@ export interface DatabaseService {
   readonly findById: (id: number) => Effect.Effect<Option.Option<Task>>
 
   /**
-   * Get all tasks
+   * Get all tasks ordered by most recently updated
    */
-  readonly findAll: () => Effect.Effect<readonly Task[]>
+  readonly findAll: (limit?: number) => Effect.Effect<readonly Task[]>
 }
 
 /**
@@ -107,7 +107,7 @@ const FIND_BY_ID_SQL = `
 `
 
 const FIND_ALL_SQL = `
-  SELECT * FROM tasks ORDER BY created_at DESC
+  SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?
 `
 
 /**
@@ -182,9 +182,9 @@ const makeDatabaseService = (db: BunDatabase): DatabaseService => ({
       return row ? Option.some(rowToTask(row)) : Option.none()
     }),
 
-  findAll: () =>
+  findAll: (limit = 50) =>
     Effect.sync(() => {
-      const rows = db.query<TaskRow, []>(FIND_ALL_SQL).all()
+      const rows = db.query<TaskRow, [number]>(FIND_ALL_SQL).all(limit)
       return rows.map(rowToTask)
     }),
 })
