@@ -2,6 +2,8 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
+import { Command } from "@effect/platform"
+import type { CommandExecutor } from "@effect/platform/CommandExecutor"
 
 /**
  * Git operation errors
@@ -22,7 +24,7 @@ export interface GitServiceI {
   readonly clone: (
     repoUrl: string,
     targetDir: string
-  ) => Effect.Effect<void, GitError>
+  ) => Effect.Effect<void, GitError, CommandExecutor>
 
   /**
    * Checkout a new branch from the current HEAD
@@ -30,12 +32,12 @@ export interface GitServiceI {
   readonly checkoutNewBranch: (
     workDir: string,
     branchName: string
-  ) => Effect.Effect<void, GitError>
+  ) => Effect.Effect<void, GitError, CommandExecutor>
 
   /**
    * Get the current branch name
    */
-  readonly getCurrentBranch: (workDir: string) => Effect.Effect<string, GitError>
+  readonly getCurrentBranch: (workDir: string) => Effect.Effect<string, GitError, CommandExecutor>
 }
 
 /**
@@ -47,35 +49,40 @@ export class GitService extends Context.Tag("GitService")<
 >() {}
 
 /**
- * Execute a git command using Bun's spawn and handle errors
+ * Execute a git command using Effect Platform Command and handle errors
  */
 const runGitCommand = (
   args: readonly string[],
   workDir?: string
-): Effect.Effect<string, GitError> =>
-  Effect.try({
-    try: () => {
-      const result = Bun.spawnSync(["git", ...args], {
-        cwd: workDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      })
+): Effect.Effect<string, GitError, CommandExecutor> =>
+  Effect.gen(function* () {
+    const cmd = `git ${args.join(" ")}`
+    yield* Effect.log(`[Git] Running: ${cmd}${workDir ? ` in ${workDir}` : ""}`)
 
-      const stdout = result.stdout.toString().trim()
-      const stderr = result.stderr.toString().trim()
+    // Build the command with optional working directory
+    let command = Command.make("git", ...args)
+    if (workDir) {
+      command = command.pipe(Command.workingDirectory(workDir))
+    }
 
-      if (result.exitCode !== 0) {
-        throw new Error(stderr || `Git command failed with exit code ${result.exitCode}`)
-      }
+    // Execute the command and get output
+    const output = yield* Command.string(command).pipe(
+      Effect.catchAll((error) =>
+        Effect.fail(
+          new GitError({
+            message: `Failed to execute git command: ${error instanceof Error ? error.message : String(error)}`,
+            command: cmd,
+            cause: error,
+          })
+        )
+      )
+    )
 
-      return stdout
-    },
-    catch: (error) =>
-      new GitError({
-        message: error instanceof Error ? error.message : String(error),
-        command: `git ${args.join(" ")}`,
-        cause: error,
-      }),
+    const stdout = output.trim()
+    yield* Effect.log(
+      `[Git] Success: ${stdout.slice(0, 100)}${stdout.length > 100 ? "..." : ""}`
+    )
+    return stdout
   })
 
 /**
@@ -83,8 +90,28 @@ const runGitCommand = (
  */
 const makeGitService = (): GitServiceI => ({
   clone: (repoUrl: string, targetDir: string) =>
-    runGitCommand(["clone", repoUrl, targetDir]).pipe(
-      Effect.asVoid,
+    Effect.gen(function* () {
+      // Input validation
+      if (!repoUrl || repoUrl.trim() === "") {
+        return yield* Effect.fail(
+          new GitError({
+            message: "Repository URL cannot be empty",
+            command: "git clone",
+          })
+        )
+      }
+      if (!targetDir || targetDir.trim() === "") {
+        return yield* Effect.fail(
+          new GitError({
+            message: "Target directory cannot be empty",
+            command: "git clone",
+          })
+        )
+      }
+
+      const result = yield* runGitCommand(["clone", repoUrl, targetDir])
+      return undefined
+    }).pipe(
       Effect.mapError(
         (error) =>
           new GitError({
@@ -96,8 +123,28 @@ const makeGitService = (): GitServiceI => ({
     ),
 
   checkoutNewBranch: (workDir: string, branchName: string) =>
-    runGitCommand(["checkout", "-b", branchName], workDir).pipe(
-      Effect.asVoid,
+    Effect.gen(function* () {
+      // Input validation
+      if (!workDir || workDir.trim() === "") {
+        return yield* Effect.fail(
+          new GitError({
+            message: "Working directory cannot be empty",
+            command: "git checkout -b",
+          })
+        )
+      }
+      if (!branchName || branchName.trim() === "") {
+        return yield* Effect.fail(
+          new GitError({
+            message: "Branch name cannot be empty",
+            command: "git checkout -b",
+          })
+        )
+      }
+
+      const result = yield* runGitCommand(["checkout", "-b", branchName], workDir)
+      return undefined
+    }).pipe(
       Effect.mapError(
         (error) =>
           new GitError({
@@ -109,7 +156,19 @@ const makeGitService = (): GitServiceI => ({
     ),
 
   getCurrentBranch: (workDir: string) =>
-    runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], workDir).pipe(
+    Effect.gen(function* () {
+      // Input validation
+      if (!workDir || workDir.trim() === "") {
+        return yield* Effect.fail(
+          new GitError({
+            message: "Working directory cannot be empty",
+            command: "git rev-parse --abbrev-ref HEAD",
+          })
+        )
+      }
+
+      return yield* runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], workDir)
+    }).pipe(
       Effect.mapError(
         (error) =>
           new GitError({
@@ -124,7 +183,11 @@ const makeGitService = (): GitServiceI => ({
 /**
  * Layer that provides the GitService
  */
-export const GitServiceLive: Layer.Layer<GitService> = Layer.succeed(
+export const GitServiceLive: Layer.Layer<GitService, never, CommandExecutor> = Layer.effect(
   GitService,
-  makeGitService()
+  Effect.gen(function* () {
+    // CommandExecutor is provided by the platform layer (BunContext.layer)
+    // We don't directly use it here, but the service methods need it at runtime
+    return makeGitService()
+  })
 )

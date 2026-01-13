@@ -14,7 +14,6 @@ import { AtlassianConfigService } from "../config/Config.ts"
 import type { JiraIssue, JiraComment } from "../schema/JiraIssue.ts"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { randomUUID } from "node:crypto"
 
 /**
  * Task workflow error
@@ -150,7 +149,6 @@ ${params.comments}
 2. Implement the task described above
 3. Commit your changes with a meaningful commit message that references the Jira key (e.g., "${params.jiraKey}: <description>")
 4. Push the branch to origin
-5. Create a Pull Request targeting the \`${params.baseBranch}\` branch
 
 When you're done, make sure all changes are committed and pushed, and the PR is created.
 `
@@ -185,41 +183,76 @@ export const TaskWorkflowLayer = TaskWorkflow.toLayer(
       // Parse Jira issue data
       const jiraIssue = JSON.parse(payload.jiraData) as JiraIssue
 
-      // Activity 2: Clone repository to temp directory
-      const tempDir = join(tmpdir(), `opencode-task-${randomUUID()}`)
+      // Use deterministic temp directory based on task ID (not random UUID!)
+      // This ensures replayed workflows use the same directory
+      const tempDir = join(tmpdir(), `opencode-task-${payload.taskId}`)
       const branchName = `feature/${payload.jiraKey}-${payload.taskId}`
 
       yield* Activity.make({
         name: "CloneRepository",
+        success: Schema.Struct({ tempDir: Schema.String, branchName: Schema.String }),
         error: TaskWorkflowError,
         execute: Effect.gen(function* () {
+          // Clean up any existing directory first (in case of retry)
+          yield* Effect.sync(() => {
+            Bun.spawnSync(["rm", "-rf", tempDir])
+          })
+          
           yield* Console.log(
             `[Workflow ${executionId}] Cloning ${config.repositoryUrl} to ${tempDir}`
           )
+          
+          // Actually run git clone
           yield* gitService.clone(config.repositoryUrl, tempDir).pipe(
             Effect.mapError(
               (e) =>
                 new TaskWorkflowError({
-                  message: e.message,
+                  message: `Git clone failed: ${e.message}`,
                   phase: "clone",
                   cause: e,
                 })
             )
           )
-
+          
           yield* Console.log(
-            `[Workflow ${executionId}] Creating branch ${branchName}`
+            `[Workflow ${executionId}] Clone completed, verifying directory exists...`
           )
+          
+          // Verify the directory was created
+          const dirExists = yield* Effect.sync(() => {
+            const stat = Bun.spawnSync(["test", "-d", tempDir])
+            return stat.exitCode === 0
+          })
+          
+          if (!dirExists) {
+            return yield* Effect.fail(
+              new TaskWorkflowError({
+                message: `Clone appeared to succeed but directory ${tempDir} does not exist`,
+                phase: "clone-verify",
+              })
+            )
+          }
+          
+          yield* Console.log(
+            `[Workflow ${executionId}] Directory verified. Creating branch ${branchName}`
+          )
+          
           yield* gitService.checkoutNewBranch(tempDir, branchName).pipe(
             Effect.mapError(
               (e) =>
                 new TaskWorkflowError({
-                  message: e.message,
+                  message: `Git checkout failed: ${e.message}`,
                   phase: "checkout",
                   cause: e,
                 })
             )
           )
+          
+          yield* Console.log(
+            `[Workflow ${executionId}] Branch ${branchName} created successfully`
+          )
+          
+          return { tempDir, branchName }
         }),
       }).pipe(
         TaskWorkflow.withCompensation((_, cause) =>

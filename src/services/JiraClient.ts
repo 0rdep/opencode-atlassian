@@ -141,9 +141,6 @@ const makeJiraClientService = (
           )
         );
 
-        console.log(request);
-        console.log(json);
-
         const response = yield* decodeSearchResponse(json).pipe(
           Effect.mapError(
             (error) =>
