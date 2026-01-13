@@ -1,0 +1,46 @@
+{
+	"$schema": "https://btca.dev/btca.schema.json",
+	"resources": [
+		{
+			"name": "effect",
+			"type": "git",
+			"url": "https://github.com/Effect-TS/effect",
+			"branch": "main",
+			"searchPath": "packages/effect/src",
+			"specialNotes": "Effect-TS core library. Focus on src directory for module implementations and type definitions."
+		},
+		{
+			"name": "effectCli",
+			"type": "git",
+			"url": "https://github.com/Effect-TS/effect",
+			"branch": "main",
+			"searchPath": "packages/cli/src",
+			"specialNotes": "@effect/cli package for building CLI applications with Effect."
+		},
+		{
+			"name": "effectPlatform",
+			"type": "git",
+			"url": "https://github.com/Effect-TS/effect",
+			"branch": "main",
+			"searchPath": "packages/platform/src",
+			"specialNotes": "@effect/platform package for platform-agnostic APIs (HTTP, filesystem, etc.)."
+		},
+		{
+			"name": "effectWorkflow",
+			"type": "git",
+			"url": "https://github.com/Effect-TS/effect",
+			"branch": "main",
+			"searchPath": "packages/workflow/src",
+			"specialNotes": "@effect/workflow package for managing workflows."
+		},
+		{
+			"name": "opencodeSdk",
+			"type": "git",
+			"url": "https://github.com/anomalyco/opencode-sdk-js",
+			"branch": "main",
+			"specialNotes": "Opencode SDK for interacting with OpenCode."
+		}
+	],
+	"model": "claude-haiku-4.5",
+	"provider": "github-copilot"
+}

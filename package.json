@@ -1,0 +1,28 @@
+{
+  "name": "opencode-atlassian",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "opencode-atlassian": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run --bun src/index.ts",
+    "start": "bun run --bun src/index.ts start",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.73.0",
+    "@effect/platform": "^0.94.1",
+    "@effect/platform-bun": "^0.87.0",
+    "@effect/workflow": "^0.16.0",
+    "@opencode-ai/sdk": "^1.1.18",
+    "effect": "^3.19.14"
+  }
+}
