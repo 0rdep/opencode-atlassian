@@ -52,6 +52,14 @@ export interface JiraClientService {
   readonly getIssueComments: (
     issueKey: string
   ) => Effect.Effect<readonly JiraComment[], JiraClientError>;
+
+  /**
+   * Transition an issue to a new status
+   */
+  readonly transitionIssue: (
+    issueKey: string,
+    statusName: string
+  ) => Effect.Effect<void, JiraClientError>;
 }
 
 /**
@@ -172,69 +180,178 @@ const makeJiraClientService = (
     return searchIssues(jql);
   };
 
-  const getIssueComments = (
-    issueKey: string
-  ): Effect.Effect<readonly JiraComment[], JiraClientError> =>
-    Effect.gen(function* () {
-      const request = HttpClientRequest.get(
-        `${baseUrl}/issue/${issueKey}/comment`
-      ).pipe(
-        HttpClientRequest.appendUrlParam("maxResults", "100"),
-        HttpClientRequest.appendUrlParam("orderBy", "created"),
-        HttpClientRequest.basicAuth(
-          config.email,
-          Redacted.value(config.apiToken)
-        ),
-        HttpClientRequest.setHeader("Accept", "application/json")
-      );
+   const getIssueComments = (
+     issueKey: string
+   ): Effect.Effect<readonly JiraComment[], JiraClientError> =>
+     Effect.gen(function* () {
+       const request = HttpClientRequest.get(
+         `${baseUrl}/issue/${issueKey}/comment`
+       ).pipe(
+         HttpClientRequest.appendUrlParam("maxResults", "100"),
+         HttpClientRequest.appendUrlParam("orderBy", "created"),
+         HttpClientRequest.basicAuth(
+           config.email,
+           Redacted.value(config.apiToken)
+         ),
+         HttpClientRequest.setHeader("Accept", "application/json")
+       );
 
-      const res = yield* httpClient.execute(request).pipe(
-        Effect.mapError(
-          (error) =>
+       const res = yield* httpClient.execute(request).pipe(
+         Effect.mapError(
+           (error) =>
+             new JiraClientError({
+               message: `HTTP request failed: ${error}`,
+               cause: error,
+             })
+         ),
+         Effect.scoped
+       );
+
+       if (res.status >= 400) {
+         return yield* Effect.fail(
+           new JiraClientError({
+             message: `Jira API returned ${res.status} for comments`,
+           })
+         );
+       }
+
+       const json = yield* res.json.pipe(
+         Effect.mapError(
+           (error) =>
+             new JiraClientError({
+               message: `Failed to parse JSON response: ${error}`,
+               cause: error,
+             })
+         )
+       );
+
+       const response = yield* decodeCommentsResponse(json).pipe(
+         Effect.mapError(
+           (error) =>
+             new JiraClientError({
+               message: `Failed to decode comments response: ${error}`,
+               cause: error,
+             })
+         )
+       );
+
+       return response.comments as readonly JiraComment[];
+     });
+
+   const transitionIssue = (
+     issueKey: string,
+     statusName: string
+   ): Effect.Effect<void, JiraClientError> =>
+     Effect.gen(function* () {
+       // First, fetch available transitions for this issue
+       const transitionsUrl = `${baseUrl}/issue/${issueKey}/transitions`;
+       const transitionsRequest = HttpClientRequest.get(transitionsUrl).pipe(
+         HttpClientRequest.basicAuth(
+           config.email,
+           Redacted.value(config.apiToken)
+         ),
+         HttpClientRequest.setHeader("Accept", "application/json")
+       );
+
+       const transitionsRes = yield* httpClient.execute(transitionsRequest).pipe(
+         Effect.mapError(
+           (error) =>
+             new JiraClientError({
+               message: `HTTP request failed when fetching transitions: ${error}`,
+               cause: error,
+             })
+         ),
+         Effect.scoped
+       );
+
+       if (transitionsRes.status >= 400) {
+         return yield* Effect.fail(
+           new JiraClientError({
+             message: `Jira API returned ${transitionsRes.status} when fetching transitions`,
+           })
+         );
+       }
+
+       const transitionsJson = yield* transitionsRes.json.pipe(
+         Effect.mapError(
+           (error) =>
+             new JiraClientError({
+               message: `Failed to parse transitions response: ${error}`,
+               cause: error,
+             })
+         )
+       );
+
+       // Find the transition ID for the desired status
+       const transitionsData = transitionsJson as {
+         transitions?: Array<{ id: string; name: string }>
+       };
+       const transitions = transitionsData.transitions ?? [];
+       const transition = transitions.find(
+         (t) => t.name.toLowerCase() === statusName.toLowerCase()
+       );
+
+       if (!transition) {
+         return yield* Effect.fail(
+           new JiraClientError({
+             message: `No transition found to status "${statusName}" for issue ${issueKey}. Available: ${transitions.map((t) => t.name).join(", ")}`,
+           })
+         );
+       }
+
+       // Now perform the transition
+       const transitionRequest = HttpClientRequest.post(transitionsUrl).pipe(
+         HttpClientRequest.basicAuth(
+           config.email,
+           Redacted.value(config.apiToken)
+         ),
+         HttpClientRequest.setHeader("Content-Type", "application/json"),
+         HttpClientRequest.setHeader("Accept", "application/json")
+       );
+
+       const transitionWithBody = yield* HttpClientRequest.bodyJson(
+         transitionRequest,
+         {
+           transition: {
+             id: transition.id,
+           },
+         }
+       ).pipe(
+         Effect.mapError(
+           (error) =>
+             new JiraClientError({
+               message: `Failed to encode transition request body: ${error}`,
+               cause: error,
+             })
+         )
+       );
+
+       const transitionResponse = yield* httpClient.execute(transitionWithBody).pipe(
+         Effect.mapError(
+           (error) =>
+             new JiraClientError({
+               message: `HTTP request failed when transitioning: ${error}`,
+               cause: error,
+             })
+         ),
+         Effect.scoped
+       );
+
+        if (transitionResponse.status >= 400) {
+          return yield* Effect.fail(
             new JiraClientError({
-              message: `HTTP request failed: ${error}`,
-              cause: error,
+              message: `Jira API returned ${transitionResponse.status} when transitioning to "${statusName}"`,
             })
-        ),
-        Effect.scoped
-      );
+          );
+        }
+      });
 
-      if (res.status >= 400) {
-        return yield* Effect.fail(
-          new JiraClientError({
-            message: `Jira API returned ${res.status} for comments`,
-          })
-        );
-      }
-
-      const json = yield* res.json.pipe(
-        Effect.mapError(
-          (error) =>
-            new JiraClientError({
-              message: `Failed to parse JSON response: ${error}`,
-              cause: error,
-            })
-        )
-      );
-
-      const response = yield* decodeCommentsResponse(json).pipe(
-        Effect.mapError(
-          (error) =>
-            new JiraClientError({
-              message: `Failed to decode comments response: ${error}`,
-              cause: error,
-            })
-        )
-      );
-
-      return response.comments as readonly JiraComment[];
-    });
-
-  return {
-    searchIssues,
-    searchAssignedIssues,
-    getIssueComments,
-  };
+    return {
+      searchIssues,
+      searchAssignedIssues,
+      getIssueComments,
+      transitionIssue,
+    };
 };
 
 /**

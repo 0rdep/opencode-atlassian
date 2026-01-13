@@ -342,21 +342,44 @@ export const TaskWorkflowLayer = TaskWorkflow.toLayer(
         }),
       })
 
-      // Activity 5: Update status to DONE and cleanup
-      yield* Activity.make({
-        name: "UpdateStatusToDone",
-        execute: Effect.gen(function* () {
-          yield* db.updateStatus(payload.taskId, "DONE")
-          yield* Console.log(
-            `[Workflow ${executionId}] Task ${payload.taskId} completed (DONE)`
-          )
+       // Activity 5: Update status to DONE and cleanup
+       yield* Activity.make({
+         name: "UpdateStatusToDone",
+         error: TaskWorkflowError,
+         execute: Effect.gen(function* () {
+           // First, transition the Jira issue to "Code Review"
+           yield* Console.log(
+             `[Workflow ${executionId}] Transitioning Jira issue ${payload.jiraKey} to Code Review`
+           )
+           yield* jiraClient
+             .transitionIssue(payload.jiraKey, "Code Review")
+             .pipe(
+               Effect.mapError(
+                 (e) =>
+                   new TaskWorkflowError({
+                     message: `Failed to transition Jira issue: ${e.message}`,
+                     phase: "jira-transition",
+                     cause: e,
+                   })
+               )
+             )
+           
+           yield* Console.log(
+             `[Workflow ${executionId}] Jira issue transitioned to Code Review`
+           )
 
-          // Clean up temp directory
-          yield* Effect.try(() => {
-            Bun.spawnSync(["rm", "-rf", tempDir])
-          }).pipe(Effect.ignore)
-        }),
-      })
+           // Then update database status to DONE
+           yield* db.updateStatus(payload.taskId, "DONE")
+           yield* Console.log(
+             `[Workflow ${executionId}] Task ${payload.taskId} completed (DONE)`
+           )
+
+           // Clean up temp directory
+           yield* Effect.try(() => {
+             Bun.spawnSync(["rm", "-rf", tempDir])
+           }).pipe(Effect.ignore)
+         }),
+       })
 
       return {
         sessionId: openCodeResult.sessionId,
