@@ -150,7 +150,7 @@ ${params.comments}
 3. Commit your changes with a meaningful commit message that references the Jira key (e.g., "${params.jiraKey}: <description>")
 4. Push the branch to origin
 
-When you're done, make sure all changes are committed and pushed, and the PR is created.
+When you're done, make sure all changes are committed and pushed.
 `
 
 /**
@@ -345,27 +345,26 @@ export const TaskWorkflowLayer = TaskWorkflow.toLayer(
        // Activity 5: Update status to DONE and cleanup
        yield* Activity.make({
          name: "UpdateStatusToDone",
-         error: TaskWorkflowError,
          execute: Effect.gen(function* () {
-           // First, transition the Jira issue to "Code Review"
+           // First, try to transition the Jira issue to "Code Review"
+           // If it fails, log a warning but continue with DONE update
            yield* Console.log(
              `[Workflow ${executionId}] Transitioning Jira issue ${payload.jiraKey} to Code Review`
            )
            yield* jiraClient
              .transitionIssue(payload.jiraKey, "Code Review")
              .pipe(
-               Effect.mapError(
+               Effect.tapError(
                  (e) =>
-                   new TaskWorkflowError({
-                     message: `Failed to transition Jira issue: ${e.message}`,
-                     phase: "jira-transition",
-                     cause: e,
-                   })
-               )
+                   Console.error(
+                     `[Workflow ${executionId}] Warning: Failed to transition Jira issue: ${e.message}`
+                   )
+               ),
+               Effect.ignore
              )
            
            yield* Console.log(
-             `[Workflow ${executionId}] Jira issue transitioned to Code Review`
+             `[Workflow ${executionId}] Jira transition completed (or skipped)`
            )
 
            // Then update database status to DONE
