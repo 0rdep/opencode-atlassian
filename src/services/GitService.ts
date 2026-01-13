@@ -38,6 +38,11 @@ export interface GitServiceI {
    * Get the current branch name
    */
   readonly getCurrentBranch: (workDir: string) => Effect.Effect<string, GitError, CommandExecutor>
+
+  /**
+   * Get the pull request URL for the current branch
+   */
+  readonly getPullRequestUrl: (workDir: string) => Effect.Effect<string, GitError, CommandExecutor>
 }
 
 /**
@@ -173,6 +178,59 @@ const makeGitService = (): GitServiceI => ({
         (error) =>
           new GitError({
             message: `Failed to get current branch: ${error.message}`,
+            command: error.command,
+            cause: error,
+          })
+      )
+    ),
+
+  getPullRequestUrl: (workDir: string) =>
+    Effect.gen(function* () {
+      // Input validation
+      if (!workDir || workDir.trim() === "") {
+        return yield* Effect.fail(
+          new GitError({
+            message: "Working directory cannot be empty",
+            command: "gh pr view --json url",
+          })
+        )
+      }
+
+      yield* Effect.log(`[Git] Getting PR URL in ${workDir}`)
+
+      // Use gh CLI to get the PR URL for the current branch
+      let command = Command.make("gh", "pr", "view", "--json", "url", "--jq", ".url")
+      command = command.pipe(Command.workingDirectory(workDir))
+
+      const output = yield* Command.string(command).pipe(
+        Effect.catchAll((error) =>
+          Effect.fail(
+            new GitError({
+              message: `Failed to get PR URL: ${error instanceof Error ? error.message : String(error)}`,
+              command: "gh pr view --json url",
+              cause: error,
+            })
+          )
+        )
+      )
+
+      const prUrl = output.trim()
+      if (!prUrl) {
+        return yield* Effect.fail(
+          new GitError({
+            message: "No pull request found for current branch",
+            command: "gh pr view --json url",
+          })
+        )
+      }
+
+      yield* Effect.log(`[Git] Found PR URL: ${prUrl}`)
+      return prUrl
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new GitError({
+            message: `Failed to get pull request URL: ${error.message}`,
             command: error.command,
             cause: error,
           })

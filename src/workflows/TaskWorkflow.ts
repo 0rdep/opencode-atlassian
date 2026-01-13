@@ -342,7 +342,55 @@ export const TaskWorkflowLayer = TaskWorkflow.toLayer(
         }),
       })
 
-      // Activity 5: Update status to DONE and cleanup
+      // Activity 5: Get PR URL and add comment to Jira
+      yield* Activity.make({
+        name: "AddPRUrlComment",
+        success: Schema.Struct({ prUrl: Schema.String }),
+        error: TaskWorkflowError,
+        execute: Effect.gen(function* () {
+          yield* Console.log(
+            `[Workflow ${executionId}] Fetching PR URL from ${tempDir}`
+          )
+
+          // Get the PR URL using gh CLI
+          const prUrl = yield* gitService.getPullRequestUrl(tempDir).pipe(
+            Effect.mapError(
+              (e) =>
+                new TaskWorkflowError({
+                  message: `Failed to get PR URL: ${e.message}`,
+                  phase: "get-pr-url",
+                  cause: e,
+                })
+            )
+          )
+
+          yield* Console.log(
+            `[Workflow ${executionId}] Adding PR URL comment to ${payload.jiraKey}: ${prUrl}`
+          )
+
+          // Add comment to Jira with the PR URL
+          yield* jiraClient
+            .addComment(payload.jiraKey, `Pull Request: ${prUrl}`)
+            .pipe(
+              Effect.mapError(
+                (e) =>
+                  new TaskWorkflowError({
+                    message: `Failed to add comment to Jira: ${e.message}`,
+                    phase: "add-jira-comment",
+                    cause: e,
+                  })
+              )
+            )
+
+          yield* Console.log(
+            `[Workflow ${executionId}] Successfully added PR URL comment to ${payload.jiraKey}`
+          )
+
+          return { prUrl }
+        }),
+      })
+
+      // Activity 6: Update status to DONE and cleanup
       yield* Activity.make({
         name: "UpdateStatusToDone",
         execute: Effect.gen(function* () {

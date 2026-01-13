@@ -52,6 +52,14 @@ export interface JiraClientService {
   readonly getIssueComments: (
     issueKey: string
   ) => Effect.Effect<readonly JiraComment[], JiraClientError>;
+
+  /**
+   * Add a comment to a Jira issue
+   */
+  readonly addComment: (
+    issueKey: string,
+    comment: string
+  ) => Effect.Effect<void, JiraClientError>;
 }
 
 /**
@@ -230,10 +238,73 @@ const makeJiraClientService = (
       return response.comments as readonly JiraComment[];
     });
 
+  const addComment = (
+    issueKey: string,
+    comment: string
+  ): Effect.Effect<void, JiraClientError> =>
+    Effect.gen(function* () {
+      const baseRequest = HttpClientRequest.post(
+        `${baseUrl}/issue/${issueKey}/comment`
+      ).pipe(
+        HttpClientRequest.basicAuth(
+          config.email,
+          Redacted.value(config.apiToken)
+        ),
+        HttpClientRequest.setHeader("Accept", "application/json"),
+        HttpClientRequest.setHeader("Content-Type", "application/json")
+      );
+
+      const request = yield* HttpClientRequest.bodyJson(baseRequest, {
+        body: {
+          type: "doc",
+          version: 1,
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                {
+                  type: "text",
+                  text: comment,
+                },
+              ],
+            },
+          ],
+        },
+      }).pipe(
+        Effect.mapError(
+          (error) =>
+            new JiraClientError({
+              message: `Failed to create request body: ${error}`,
+              cause: error,
+            })
+        )
+      );
+
+      const res = yield* httpClient.execute(request).pipe(
+        Effect.mapError(
+          (error) =>
+            new JiraClientError({
+              message: `HTTP request failed: ${error}`,
+              cause: error,
+            })
+        ),
+        Effect.scoped
+      );
+
+      if (res.status >= 400) {
+        return yield* Effect.fail(
+          new JiraClientError({
+            message: `Failed to add comment: Jira API returned ${res.status}`,
+          })
+        );
+      }
+    });
+
   return {
     searchIssues,
     searchAssignedIssues,
     getIssueComments,
+    addComment,
   };
 };
 
