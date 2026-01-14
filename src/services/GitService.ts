@@ -38,6 +38,20 @@ export interface GitServiceI {
    * Get the current branch name
    */
   readonly getCurrentBranch: (workDir: string) => Effect.Effect<string, GitError, CommandExecutor>
+
+  /**
+   * Get the remote URL for the origin
+   */
+  readonly getRemoteUrl: (workDir: string) => Effect.Effect<string, GitError, CommandExecutor>
+
+  /**
+   * Construct a Bitbucket PR creation URL from a remote URL and branch name
+   */
+  readonly getBitbucketPrUrl: (
+    remoteUrl: string,
+    branchName: string,
+    baseBranch: string
+  ) => Effect.Effect<string, GitError>
 }
 
 /**
@@ -178,6 +192,84 @@ const makeGitService = (): GitServiceI => ({
           })
       )
     ),
+
+  getRemoteUrl: (workDir: string) =>
+    Effect.gen(function* () {
+      // Input validation
+      if (!workDir || workDir.trim() === "") {
+        return yield* Effect.fail(
+          new GitError({
+            message: "Working directory cannot be empty",
+            command: "git remote get-url origin",
+          })
+        )
+      }
+
+      return yield* runGitCommand(["remote", "get-url", "origin"], workDir)
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new GitError({
+            message: `Failed to get remote URL: ${error.message}`,
+            command: error.command,
+            cause: error,
+          })
+      )
+    ),
+
+  getBitbucketPrUrl: (remoteUrl: string, branchName: string, baseBranch: string) =>
+    Effect.gen(function* () {
+      // Parse the remote URL to extract workspace and repo
+      // Supports formats:
+      // - git@bitbucket.org:workspace/repo.git
+      // - https://bitbucket.org/workspace/repo.git
+      // - https://user@bitbucket.org/workspace/repo.git
+      
+      let workspace: string = ""
+      let repo: string = ""
+      
+      // Remove trailing .git if present
+      const cleanUrl = remoteUrl.replace(/\.git$/, "")
+      
+      if (cleanUrl.startsWith("git@bitbucket.org:")) {
+        // SSH format: git@bitbucket.org:workspace/repo
+        const path = cleanUrl.replace("git@bitbucket.org:", "")
+        const parts = path.split("/")
+        if (parts.length < 2 || !parts[0] || !parts[1]) {
+          return yield* Effect.fail(
+            new GitError({
+              message: `Invalid Bitbucket SSH URL format: ${remoteUrl}`,
+            })
+          )
+        }
+        workspace = parts[0]
+        repo = parts[1]
+      } else if (cleanUrl.includes("bitbucket.org/")) {
+        // HTTPS format: https://bitbucket.org/workspace/repo or https://user@bitbucket.org/workspace/repo
+        const match = cleanUrl.match(/bitbucket\.org\/([^/]+)\/([^/]+)/)
+        if (!match || !match[1] || !match[2]) {
+          return yield* Effect.fail(
+            new GitError({
+              message: `Invalid Bitbucket HTTPS URL format: ${remoteUrl}`,
+            })
+          )
+        }
+        workspace = match[1]
+        repo = match[2]
+      } else {
+        return yield* Effect.fail(
+          new GitError({
+            message: `Unsupported repository URL format: ${remoteUrl}. Expected Bitbucket URL.`,
+          })
+        )
+      }
+      
+      // Construct the Bitbucket PR creation URL
+      // Format: https://bitbucket.org/{workspace}/{repo}/pull-requests/new?source={branch}&dest={baseBranch}
+      const prUrl = `https://bitbucket.org/${workspace}/${repo}/pull-requests/new?source=${encodeURIComponent(branchName)}&dest=${encodeURIComponent(baseBranch)}`
+      
+      return prUrl
+    }),
 })
 
 /**

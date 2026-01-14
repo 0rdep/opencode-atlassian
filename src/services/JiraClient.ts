@@ -60,6 +60,14 @@ export interface JiraClientService {
     issueKey: string,
     statusName: string
   ) => Effect.Effect<void, JiraClientError>;
+
+  /**
+   * Add a comment to an issue
+   */
+  readonly addComment: (
+    issueKey: string,
+    body: string
+  ) => Effect.Effect<void, JiraClientError>;
 }
 
 /**
@@ -346,11 +354,74 @@ const makeJiraClientService = (
         }
       });
 
+    const addComment = (
+      issueKey: string,
+      body: string
+    ): Effect.Effect<void, JiraClientError> =>
+      Effect.gen(function* () {
+        const commentUrl = `${baseUrl}/issue/${issueKey}/comment`;
+        const request = HttpClientRequest.post(commentUrl).pipe(
+          HttpClientRequest.basicAuth(
+            config.email,
+            Redacted.value(config.apiToken)
+          ),
+          HttpClientRequest.setHeader("Content-Type", "application/json"),
+          HttpClientRequest.setHeader("Accept", "application/json")
+        );
+
+        // Jira API v3 uses ADF (Atlassian Document Format) for comments
+        const requestWithBody = yield* HttpClientRequest.bodyJson(request, {
+          body: {
+            type: "doc",
+            version: 1,
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  {
+                    type: "text",
+                    text: body,
+                  },
+                ],
+              },
+            ],
+          },
+        }).pipe(
+          Effect.mapError(
+            (error) =>
+              new JiraClientError({
+                message: `Failed to encode comment request body: ${error}`,
+                cause: error,
+              })
+          )
+        );
+
+        const res = yield* httpClient.execute(requestWithBody).pipe(
+          Effect.mapError(
+            (error) =>
+              new JiraClientError({
+                message: `HTTP request failed when adding comment: ${error}`,
+                cause: error,
+              })
+          ),
+          Effect.scoped
+        );
+
+        if (res.status >= 400) {
+          return yield* Effect.fail(
+            new JiraClientError({
+              message: `Jira API returned ${res.status} when adding comment`,
+            })
+          );
+        }
+      });
+
     return {
       searchIssues,
       searchAssignedIssues,
       getIssueComments,
       transitionIssue,
+      addComment,
     };
 };
 

@@ -367,6 +367,31 @@ export const TaskWorkflowLayer = TaskWorkflow.toLayer(
              `[Workflow ${executionId}] Jira transition completed (or skipped)`
            )
 
+           // Construct the Bitbucket PR URL and add it as a comment
+           yield* Console.log(
+             `[Workflow ${executionId}] Creating PR URL comment for ${payload.jiraKey}`
+           )
+           
+           yield* Effect.gen(function* () {
+             const prUrl = yield* gitService
+               .getBitbucketPrUrl(config.repositoryUrl, branchName, config.baseBranch)
+             
+             yield* jiraClient
+               .addComment(payload.jiraKey, `Pull Request: ${prUrl}`)
+             
+             yield* Console.log(
+               `[Workflow ${executionId}] PR URL comment added to ${payload.jiraKey}`
+             )
+           }).pipe(
+             Effect.tapError(
+               (e) =>
+                 Console.error(
+                   `[Workflow ${executionId}] Warning: Failed to add PR URL comment: ${e.message}`
+                 )
+             ),
+             Effect.ignore
+           )
+
            // Then update database status to DONE
            yield* db.updateStatus(payload.taskId, "DONE")
            yield* Console.log(
